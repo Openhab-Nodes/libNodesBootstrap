@@ -1,0 +1,19 @@
+{
+  "name": "libBootstrapWifi",
+  "keywords": "bootstrap, wifi, app, android",
+  "description": "Bootstrap your wifi device via app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Openhab-Nodes/libBootstrapWifi.git"
+  },
+  "version": "1.0",
+  "authors": {
+    "name": "David Gräff",
+    "url": "https://github.com/Openhab-Nodes/libBootstrapWifi"
+  },
+  "exclude": [
+    "test", "tmp"
+  ],
+  "frameworks": "arduino",
+  "platforms": "*"
+}
