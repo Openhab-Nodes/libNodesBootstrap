@@ -29,7 +29,7 @@ public:
 
     bool check_send_header(bst_udp_send_pkt_t* pkt);
 
-    bool check_receive_header(bst_udp_receive_pkt_t* pkt);
+    bst_connect_options default_options();
 
     // Outgoing network traffic for udp port 8711 to be broadcasted
     virtual void bst_network_output(const char* data, size_t data_len) = 0;
@@ -41,26 +41,30 @@ public:
     // SSID and password are known, connect now. Return CONNECTING in bst_get_connection_state().
     // If the connection failed change the state you return in bst_connection_state() to
     // FAILED_CREDENTIALS_WRONG or FAILED_SSID_NOT_FOUND state.
-    virtual void bst_connect_to_wifi(const char* ssid, const char* pwd) = 0;
+    virtual void bst_connect_to_wifi(const char* ssid, const char* pwd, bst_state state) = 0;
 
     // If you need to bootstrap not only the wifi connection but for example also
     // need to connect to a server, you may set the **need_advanced_connection** option.
     // After a successful wifi connection this method will be called with the additional data the app provided.
     virtual void bst_connect_advanced(const char* data) = 0;
 
-    // Switch to AP mode with the given access point ssid and password. Open a udp socket on port 8711.
-    virtual void bst_discover_mode(const char* ap_ssid, const char* ap_pwd) = 0;
-
     // The app requests a list of wifi networks in range. Call bst_wifi_network_list(network_list_start) asynchronously if you gathered that data.
     virtual void bst_request_wifi_network_list() = 0;
 
     // Store the data blob with the given length. Provide this data to `bst_setup` on boot.
-    virtual void bst_store_data(char* data, size_t data_len) = 0;
+    virtual void bst_store_bootstrap_data(char* bst_data, size_t bst_data_len) = 0;
+
+    virtual void bst_store_crypto_secret(char* bound_key, size_t bound_key_len) = 0;
 
     virtual time_t bst_get_system_time_ms() {
         if (overwrite_time)
             return overwrite_time;
 
+        auto duration = std::chrono::system_clock::now().time_since_epoch();
+        return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+    }
+
+    virtual uint64_t bst_get_random() {
         auto duration = std::chrono::system_clock::now().time_since_epoch();
         return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
     }

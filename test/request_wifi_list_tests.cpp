@@ -43,13 +43,12 @@ public:
         bst_network_output_flag = true;
         bst_udp_send_pkt_t* pkt = (bst_udp_send_pkt_t*)data;
         ASSERT_TRUE(check_send_header(pkt));
-        ASSERT_EQ(RSP_WIFI_LIST, pkt->response_code);
+        ASSERT_EQ(STATE_OK, pkt->state_code);
 
-        const char* p = data + bst_udp_send_pkt_t_len;
+        ASSERT_EQ(2, pkt->wifi_list_entries);
+        ASSERT_GE(18, pkt->wifi_list_size_in_bytes);
 
-        // First byte is the number of the entries
-        ASSERT_EQ(2, (uint8_t)*p);
-        ++p;
+        const char* p = pkt->data_wifi_list_and_log_msg;
 
         // strength
         ASSERT_EQ(100, (uint8_t)*p);
@@ -75,23 +74,24 @@ public:
         (void)data_len;
     }
     bst_connect_state bst_get_connection_state() override {
-        return BST_DISCOVER_MODE;
+        return BST_STATE_NO_CONNECTION;
     }
-    void bst_connect_to_wifi(const char *ssid, const char *pwd) override {
+    void bst_connect_to_wifi(const char *ssid, const char *pwd, bst_state state) override {
         (void)ssid;
         (void)pwd;
+        (void)state;
     }
     void bst_connect_advanced(const char *data) override {
         (void)data;
     }
-    void bst_discover_mode(const char *ap_ssid, const char *ap_pwd) override {
-        (void)ap_ssid;
-        (void)ap_pwd;
-    }
     void bst_request_wifi_network_list() override {
         bst_request_wifi_network_list_flag = true;
     }
-    void bst_store_data(char *data, size_t data_len) {
+    void bst_store_bootstrap_data(char *data, size_t data_len) {
+        (void)data;
+        (void)data_len;
+    }
+    void bst_store_crypto_secret(char *data, size_t data_len) {
         (void)data;
         (void)data_len;
     }
@@ -100,17 +100,25 @@ public:
     }
 };
 
+static void prv_generate_test_hello(bst_udp_hello_receive_pkt_t* p) {
+    const char hdr[] = BST_NETWORK_HEADER;
+    memcpy((char*)p->hdr, hdr, sizeof(BST_NETWORK_HEADER));
+
+    p->command_code = CMD_HELLO;
+    int len = sizeof("app_nonce");
+    memcpy(p->app_nonce,"app_nonce",len);
+
+    prv_add_checksum_and_encrypt((bst_udp_send_pkt_t*)p);
+}
+
 TEST_F(RequestWifiListTests, RequestList) {
-    bst_setup({},NULL,0);
+    bst_setup({}, NULL, 0, NULL, 0);
 
-    char mem[bst_udp_receive_pkt_t_len] = {0};
-    bst_udp_receive_pkt_t* p = (bst_udp_receive_pkt_t*)mem;
-    memcpy((char*)&(p->hdr[0]),"BSTwifi1",sizeof("BSTwifi1"));
-    p->command_code = CMD_REQUEST_WIFI;
-    p->session_id = 10;
-
-    bst_network_input((char*)p,bst_udp_receive_pkt_t_len);
-    bst_periodic();
+    { // Send hello packet now
+        bst_udp_hello_receive_pkt_t pkt;
+        prv_generate_test_hello(&pkt);
+        bst_network_input((char*)&pkt,sizeof(bst_udp_hello_receive_pkt_t));
+    }
 
     ASSERT_TRUE(bst_request_wifi_network_list_flag);
 

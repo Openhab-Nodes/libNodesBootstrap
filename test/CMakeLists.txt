@@ -13,7 +13,7 @@ include("${REPO_ROOT}/src/boostrapWifi.cmake")
 
 enable_testing()
 
-add_compile_options(-pedantic-errors -ansi -Wextra -Wall -Wuninitialized -Wmissing-declarations -Wno-missing-field-initializers)
+add_compile_options(-pedantic-errors -ansi -Wextra -Wall -Wuninitialized -Wmissing-declarations -Wno-missing-field-initializers -DBST_TEST_SUITE)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-elide-constructors -Woverloaded-virtual")
 
 ## Prepare gtest

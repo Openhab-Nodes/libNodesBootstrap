@@ -30,52 +30,46 @@ public:
 
     virtual void SetUp() {
         instance = this;
-        bst_network_output_flag = false;
-        bst_connect_to_wifi_flag= false;
-        bst_discover_mode_flag = false;
+        network_output_flag = false;
+        state = BST_MODE_UNINITIALIZED;
         retry_advanced_connection = 0;
-        connect_will_succeed = false;
-        connect_wrong_cred_flag = false;
-        connect_adv_will_succeed = 0;
+        next_connect_state = BST_STATE_NO_CONNECTION;
     }
 
-    bool bst_network_output_flag;
-    bool bst_connect_to_wifi_flag;
-    bool bst_discover_mode_flag;
-    int retry_advanced_connection;
-    bool connect_will_succeed;
-    bool connect_adv_will_succeed;
-    bool connect_wrong_cred_flag;
-
-    prv_bst_response expect_rsp_code;
+    bool network_output_flag;
+    prv_bst_error_state network_out_state;
     char network_out_data[512];
+
+    int retry_advanced_connection;
+    bst_state state;
+    bst_connect_state next_connect_state;
+
 
 public:
     void bst_network_output(const char *data, size_t data_len) override {
-        bst_network_output_flag = true;
+        network_output_flag = true;
         bst_udp_send_pkt_t* pkt = (bst_udp_send_pkt_t*)data;
         ASSERT_TRUE(check_send_header(pkt));
-        ASSERT_EQ(expect_rsp_code, pkt->response_code);
-        ASSERT_GE(data_len, bst_udp_send_pkt_t_len);
-        memcpy(network_out_data, pkt->data, data_len);
+        network_out_state =(prv_bst_error_state) pkt->state_code;
+        ASSERT_GE(data_len, sizeof(bst_udp_send_pkt_t));
+        memcpy(network_out_data, pkt->data_wifi_list_and_log_msg, data_len);
     }
     bst_connect_state bst_get_connection_state() override {
-        if (connect_wrong_cred_flag)
-            return BST_FAILED_CREDENTIALS_WRONG;
-        if (connect_will_succeed) {
-            if (connect_adv_will_succeed && retry_advanced_connection)
-                return BST_CONNECTED_ADVANCED;
-            else
-                return BST_CONNECTED;
-        }
-        if (bst_connect_to_wifi_flag)
-            return BST_CONNECTING;
-        return BST_DISCOVER_MODE;
+        return next_connect_state;
     }
-    void bst_connect_to_wifi(const char *ssid, const char *pwd) override {
-        bst_connect_to_wifi_flag = true;
-        ASSERT_STREQ("wifi1", ssid);
-        ASSERT_STREQ("pwd", pwd);
+    void bst_connect_to_wifi(const char *ssid, const char *pwd, bst_state state) override {
+        this->state = state;
+        if (state == BST_MODE_BOOTSTRAPPED) {
+            if (strcmp("wifi1", ssid) == 0 && strcmp("pwd", pwd) == 0)
+                next_connect_state = BST_STATE_CONNECTED;
+            else
+                next_connect_state = BST_STATE_FAILED_CREDENTIALS_WRONG;
+        } else if (state == BST_MODE_WAIT_FOR_BOOTSTRAP) {
+            if (strcmp("bootstrap_ssid", ssid) == 0 && strcmp("bootstrap_key", pwd) == 0)
+                next_connect_state = BST_STATE_CONNECTED;
+            else
+                next_connect_state = BST_STATE_FAILED_CREDENTIALS_WRONG;
+        }
     }
     void bst_connect_advanced(const char *data) override {
         ASSERT_TRUE(data);
@@ -83,74 +77,145 @@ public:
         ASSERT_TRUE(memcmp(data,"test",data_len)==0);
          ++retry_advanced_connection;
     }
-    void bst_discover_mode(const char *ap_ssid, const char *ap_pwd) override {
-        (void)ap_ssid;
-        (void)ap_pwd;
-        bst_connect_to_wifi_flag = false;
-        bst_discover_mode_flag = true;
-    }
+
     void bst_request_wifi_network_list() {
+        bst_wifi_network_list(NULL);
     }
-    void bst_store_data(char *data, size_t data_len) {
+
+    void bst_store_bootstrap_data(char *data, size_t data_len) {
+        (void)data;
+        (void)data_len;
+    }
+    void bst_store_crypto_secret(char *data, size_t data_len) {
         (void)data;
         (void)data_len;
     }
 };
 
-static int prv_generate_test_data(char* mem) {
-    int len = sizeof("wifi1\0pwd\0test");
-    bst_udp_receive_pkt_t* p = (bst_udp_receive_pkt_t*)mem;
-    memcpy((char*)&(p->hdr[0]),"BSTwifi1",sizeof("BSTwifi1"));
+static void prv_generate_test_data(bst_udp_bootstrap_receive_pkt_t* p, bool correct) {
+    const char hdr[] = BST_NETWORK_HEADER;
+    memcpy((char*)p->hdr, hdr, sizeof(BST_NETWORK_HEADER));
+
     p->command_code = CMD_SET_DATA;
-    p->session_id = 10;
-    memcpy(p->data,"wifi1\0pwd\0test",len);
-    return len;
+
+    if (correct) {
+        int len = sizeof("wifi1\0pwd\0test");
+        memcpy(p->bootstrap_data,"wifi1\0pwd\0test",len);
+    } else {
+        int len = sizeof("wifi1\0pwdwrong\0test");
+        memcpy(p->bootstrap_data,"wifi1\0pwdwrong\0test",len);
+    }
+
+    prv_add_checksum_and_encrypt((bst_udp_send_pkt_t*)p);
 }
 
-static int prv_generate_test_bind_data(char* mem) {
-    int len = sizeof("new_secret");
-    bst_udp_receive_pkt_t* p = (bst_udp_receive_pkt_t*)mem;
-    memcpy((char*)&(p->hdr[0]),"BSTwifi1",sizeof("BSTwifi1"));
+static void prv_generate_test_bind(bst_udp_bind_receive_pkt_t* p) {
+    const char hdr[] = BST_NETWORK_HEADER;
+    memcpy((char*)p->hdr, hdr, sizeof(BST_NETWORK_HEADER));
+
     p->command_code = CMD_BIND;
-    p->session_id = 10;
-    memcpy(p->data,"new_secret",len);
-    return len;
+
+    int len = sizeof("new_secret");
+    memcpy(p->new_bind_key,"new_secret",len);
+    p->new_bind_key_len = len;
+
+    prv_add_checksum_and_encrypt((bst_udp_send_pkt_t*)p);
+}
+
+static void prv_generate_test_hello(bst_udp_hello_receive_pkt_t* p) {
+    const char hdr[] = BST_NETWORK_HEADER;
+    memcpy((char*)p->hdr, hdr, sizeof(BST_NETWORK_HEADER));
+
+    p->command_code = CMD_HELLO;
+    int len = sizeof("app_nonce");
+    memcpy(p->app_nonce,"app_nonce",len);
+
+    prv_add_checksum_and_encrypt((bst_udp_send_pkt_t*)p);
+}
+
+TEST_F(StateMachineTests, NoNetworkInputWithoutAnAppSession) {
+    bst_connect_options o = default_options();
+    bst_setup(o,NULL, 0, NULL, 0);
+
+    useCurrentTimeOverwrite();
+
+    ASSERT_EQ(BST_MODE_WAIT_FOR_BOOTSTRAP, prv_instance.state.state);
+    // We should have been called by bst_connect_advanced() as of now
+    ASSERT_EQ(BST_MODE_WAIT_FOR_BOOTSTRAP, this->state);
+
+    bst_periodic();
+
+    {
+        bst_udp_bind_receive_pkt_t pkt;
+        prv_generate_test_bind(&pkt);
+        bst_network_input((char*)&pkt,sizeof(bst_udp_bind_receive_pkt_t));
+    }
+
+    // Without an app session, initiated by a hello packet, no network response
+    // should be generated.
+    ASSERT_FALSE(prv_instance.flags.request_bind);
+    bst_periodic();
+    ASSERT_FALSE(network_output_flag);
+}
+
+TEST_F(StateMachineTests, Binding) {
+    bst_connect_options o = default_options();
+    bst_setup(o,NULL, 0, NULL, 0);
+
+    useCurrentTimeOverwrite();
+
+    ASSERT_EQ(BST_MODE_WAIT_FOR_BOOTSTRAP, this->state);
+
+    {
+        bst_udp_hello_receive_pkt_t pkt;
+        prv_generate_test_hello(&pkt);
+        bst_network_input((char*)&pkt,sizeof(bst_udp_hello_receive_pkt_t));
+    }
+
+    ASSERT_EQ(0, *prv_instance.state.prv_device_nonce);
+    ASSERT_GT(prv_instance.state.timeout_app_session, bst_get_system_time_ms());
+
+    network_output_flag = false;
+    for (uint8_t i = 0; i<5;++i) bst_periodic();
+    ASSERT_EQ(STATE_OK, network_out_state);
+    ASSERT_TRUE(network_output_flag);
+
+    {
+        bst_udp_bind_receive_pkt_t pkt;
+        prv_generate_test_bind(&pkt);
+        bst_network_input((char*)&pkt,sizeof(bst_udp_bind_receive_pkt_t));
+    }
+
+    ASSERT_TRUE(prv_instance.flags.request_bind);
+    ASSERT_GT(*prv_instance.state.prv_device_nonce, 0);
+    bst_periodic();
+    ASSERT_FALSE(prv_instance.flags.request_bind);
+
+    // Without an app session, initiated by a hello packet, no network response
+    // should be generated.
+    bst_periodic();
+    ASSERT_FALSE(network_output_flag);
 }
 
 TEST_F(StateMachineTests, DataViaInputAndTimeoutAndReconnect) {
-    bst_connect_options o;
-    o.factory_app_secret = "app_secret";
-    o.interval_try_again_ms = 500; // every 500ms
-    o.name = "testname";
-    o.need_advanced_connection = false;
-    o.unique_device_id = "ABCDEF";
-    o.retry_advanced_connection = 0;
-    o.timeout_connecting_state_ms = 200; // 200ms
-    bst_setup(o,NULL, 0);
+    bst_connect_options o = default_options();
+    bst_setup(o,NULL, 0, NULL, 0);
 
-    for (uint8_t i = 0; i<5;++i) {
-        ASSERT_EQ(BST_DISCOVER_MODE, prv_instance.state.last);
-        bst_periodic();
+    useCurrentTimeOverwrite();
+
+    { // Send hello packet now
+        bst_udp_hello_receive_pkt_t pkt;
+        prv_generate_test_hello(&pkt);
+        bst_network_input((char*)&pkt,sizeof(bst_udp_hello_receive_pkt_t));
     }
-    ASSERT_EQ(BST_DISCOVER_MODE, prv_instance.state.last);
-
-    char mem[bst_udp_receive_pkt_t_len+20] = {0};
-    int len = prv_generate_test_data(mem);
-    bst_network_input(mem,bst_udp_receive_pkt_t_len+len);
-
-    expect_rsp_code = RSP_DATA_ACCEPTED;
 
     bst_periodic();
-    ASSERT_TRUE(bst_connect_to_wifi_flag);
-    ASSERT_TRUE(bst_network_output_flag);
-    bst_network_output_flag = false;
 
-    ASSERT_EQ(BST_CONNECTING, bst_get_connection_state());
-
-    for (uint8_t i = 0; i<5;++i) {
-        bst_periodic();
-        ASSERT_EQ(BST_CONNECTING, prv_instance.state.last);
-        ASSERT_GT(prv_instance.state.timeout_connecting, bst_get_system_time_ms());
+    // Send data packet now
+    {
+        bst_udp_bootstrap_receive_pkt_t pkt;
+        prv_generate_test_data(&pkt, true);
+        bst_network_input((char*)&pkt,sizeof(bst_udp_bootstrap_receive_pkt_t));
     }
 
     // Test if input is parsed correctly
@@ -158,127 +223,109 @@ TEST_F(StateMachineTests, DataViaInputAndTimeoutAndReconnect) {
     ASSERT_STREQ("pwd",prv_instance.pwd);
     ASSERT_STREQ("test",prv_instance.additional);
 
+    bst_periodic();
+
+    // We simulate a failed connection now
+    next_connect_state = BST_STATE_FAILED_SSID_NOT_FOUND;
+
+    for (uint8_t i = 0; i<5;++i) bst_periodic();
+
+    // Test if the state has changed to wait for bootstrap mode.
+    ASSERT_EQ(BST_MODE_WAIT_FOR_BOOTSTRAP, this->state);
+    ASSERT_EQ(BST_STATE_CONNECTED, bst_get_connection_state());
+
+    // The state should stay the same until the timeout happends
+    bst_periodic();
+
+    ASSERT_EQ(BST_MODE_WAIT_FOR_BOOTSTRAP, this->state);
+    ASSERT_EQ(BST_STATE_CONNECTED, bst_get_connection_state());
+
     // Test if timeout_connecting_state_ms works
-    usleep(1000*210);
-    bst_periodic();
-    ASSERT_EQ(BST_FAILED_SSID_NOT_FOUND, prv_instance.state.last);
-    ASSERT_EQ(BST_DISCOVER_MODE, bst_get_connection_state());
-    ASSERT_TRUE(bst_discover_mode_flag);
+    addTimeMsOverwrite(prv_instance.options.timeout_connecting_state_ms+5);
 
-    // Test if interval_try_again_ms works
     bst_periodic();
-    usleep(1000*510);
-    bst_periodic();
-    ASSERT_EQ(BST_CONNECTING, bst_get_connection_state());
-    ASSERT_TRUE(bst_connect_to_wifi_flag);
-    ASSERT_TRUE(bst_network_output_flag);
 
-    connect_will_succeed = true;
-    ASSERT_EQ(BST_CONNECTED, bst_get_connection_state());
-    bst_periodic();
-    ASSERT_EQ(BST_CONNECTED, prv_instance.state.last);
+    // Bootstrap mode should be active now, because retry is set to <= 1
+    ASSERT_EQ(BST_MODE_BOOTSTRAPPED, this->state);
+    ASSERT_EQ(BST_STATE_CONNECTED, bst_get_connection_state());
 }
 
 TEST_F(StateMachineTests, AdvancedConnection) {
-    bst_connect_options o;
-    o.factory_app_secret = "app_secret";
-    o.interval_try_again_ms = 500; // every 500ms
-    o.name = "testname";
-    o.need_advanced_connection = true;
-    o.unique_device_id = "ABCDEF";
-    o.retry_advanced_connection = 3;
-    o.timeout_connecting_state_ms = 200; // 200ms
-    bst_setup(o,NULL, 0);
-
-    char mem[bst_udp_receive_pkt_t_len+20] = {0};
-    int len = prv_generate_test_data(mem);
+    bst_connect_options o = default_options();
+    o.retry_connecting_to_destination_network = 2;
+    bst_setup(o,NULL, 0, NULL, 0);
 
     useCurrentTimeOverwrite();
 
-    // Expect change to CONNECTING
-    expect_rsp_code = RSP_DATA_ACCEPTED;
-    bst_network_input(mem,bst_udp_receive_pkt_t_len+len);
-    ASSERT_STREQ(o.factory_app_secret, prv_instance.ap_mode_pwd);
-    bst_periodic();
-    ASSERT_EQ(BST_DISCOVER_MODE, prv_instance.state.last);
-    bst_periodic();
-    ASSERT_TRUE(bst_connect_to_wifi_flag);
-    ASSERT_TRUE(bst_network_output_flag);
-    ASSERT_EQ(BST_CONNECTING, prv_instance.state.last);
+    { // Send hello packet now
+        bst_udp_hello_receive_pkt_t pkt;
+        prv_generate_test_hello(&pkt);
+        bst_network_input((char*)&pkt,sizeof(bst_udp_hello_receive_pkt_t));
+    }
 
-    // Expect change to CONNECTED and at least one try to connect to advanced
-    connect_will_succeed = true;
     bst_periodic();
-    ASSERT_EQ(BST_CONNECTED, prv_instance.state.last);
-    ASSERT_EQ(1, retry_advanced_connection);
+
+    { // Send bootstrap packet
+        bst_udp_bootstrap_receive_pkt_t pkt;
+        prv_generate_test_data(&pkt, true);
+        bst_network_input((char*)&pkt,sizeof(bst_udp_bootstrap_receive_pkt_t));
+    }
+
+    network_output_flag = false;
+    bst_periodic();
+    ASSERT_EQ(STATE_OK, network_out_state);
+    ASSERT_TRUE(network_output_flag);
+
+    ASSERT_EQ(BST_STATE_CONNECTED, bst_get_connection_state());
+    ASSERT_GE(1, retry_advanced_connection);
 
     // Expect no further connect to advanced until timeout_connecting_state_ms is over
     for(unsigned i=0;i<5;++i) {
         bst_periodic();
     }
 
+    ASSERT_EQ(BST_STATE_CONNECTED, bst_get_connection_state());
+    ASSERT_GE(1, retry_advanced_connection);
+
     // Expect second try to connect to advanced
     addTimeMsOverwrite(o.timeout_connecting_state_ms+10);
 
+    ASSERT_GE(2, retry_advanced_connection);
+    next_connect_state = BST_STATE_CONNECTED_ADVANCED;
+
     bst_periodic();
-    ASSERT_EQ(BST_CONNECTED, prv_instance.state.last);
-    ASSERT_EQ(2, retry_advanced_connection);
 
-    connect_adv_will_succeed = true;
-    // Expect third try to connect to advanced
-    addTimeMsOverwrite(o.timeout_connecting_state_ms+10);
-    bst_periodic();
-    ASSERT_EQ(BST_CONNECTED_ADVANCED, prv_instance.state.last);
-}
-
-TEST_F(StateMachineTests, ChangeSecret) {
-    bst_setup({},NULL,0);
-    ASSERT_STREQ("", prv_instance.ap_mode_pwd);
-
-    useCurrentTimeOverwrite();
-
-    expect_rsp_code = RSP_BINDING_ACCEPTED;
-
-    char mem[bst_udp_receive_pkt_t_len+20] = {0};
-    int len = prv_generate_test_bind_data(mem);
-    bst_network_input(mem,bst_udp_receive_pkt_t_len+len);
-    ASSERT_STREQ("new_secret", prv_instance.ap_mode_pwd);
-    bst_periodic();
+    ASSERT_EQ(BST_STATE_CONNECTED_ADVANCED, bst_get_connection_state());
 }
 
 TEST_F(StateMachineTests, CredentialsWrong) {
-    bst_setup({},NULL,0);
+    int len = sizeof("wifi1\0pwd_wrong\0test");
+    char data[] = "wifi1\0pwd_wrong\0test";
+    bst_setup({},data,len,NULL,0);
+
+    ASSERT_EQ(STATE_ERROR_WIFI_CREDENTIALS_WRONG, bst_get_connection_state());
+
+    bst_periodic();
 
     useCurrentTimeOverwrite();
 
-    expect_rsp_code = RSP_DATA_ACCEPTED;
-    char mem[bst_udp_receive_pkt_t_len+20] = {0};
-    int len = prv_generate_test_data(mem);
-    bst_network_input(mem,bst_udp_receive_pkt_t_len+len);
-    ASSERT_STREQ("", prv_instance.ap_mode_pwd);
+    { // Send hello packet now
+        bst_udp_hello_receive_pkt_t pkt;
+        prv_generate_test_hello(&pkt);
+        bst_network_input((char*)&pkt,sizeof(bst_udp_hello_receive_pkt_t));
+    }
 
     bst_periodic();
-    bst_periodic();
-    ASSERT_EQ(BST_CONNECTING, prv_instance.state.last);
 
-    bst_discover_mode_flag = false;
-    connect_wrong_cred_flag = true;
-    bst_periodic();
-    ASSERT_EQ(BST_FAILED_CREDENTIALS_WRONG, prv_instance.state.last);
+    {
+        bst_udp_bootstrap_receive_pkt_t pkt;
+        prv_generate_test_data(&pkt, false);
+        bst_network_input((char*)&pkt,sizeof(bst_udp_bootstrap_receive_pkt_t));
+    }
 
-    connect_wrong_cred_flag = false;
     bst_periodic();
-    ASSERT_EQ(BST_DISCOVER_MODE, prv_instance.state.last);
-    ASSERT_TRUE(bst_discover_mode_flag);
-
-    // request error msg
-    bst_udp_receive_pkt_t p = {0};
-    memcpy((char*)&(p.hdr[0]),"BSTwifi1",sizeof("BSTwifi1"));
-    p.command_code = CMD_REQUEST_ERROR_LOG;
-    bst_network_input((char*)&p,bst_udp_receive_pkt_t_len);
-
-    expect_rsp_code = RSP_ERROR_UNSPECIFIED;
-    bst_periodic();
-    ASSERT_TRUE(bst_network_output_flag);
+    ASSERT_EQ(BST_STATE_FAILED_CREDENTIALS_WRONG, bst_get_connection_state());
+    ASSERT_EQ(STATE_ERROR_WIFI_CREDENTIALS_WRONG, network_out_state);
+    ASSERT_TRUE(network_output_flag);
     ASSERT_STREQ("WiFi Credentials wrong", network_out_data);
 }
