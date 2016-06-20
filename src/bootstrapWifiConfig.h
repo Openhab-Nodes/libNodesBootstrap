@@ -8,8 +8,20 @@
 #define BST_NONCE_SIZE 8
 #endif
 
+#ifndef BST_UID_SIZE
+#define BST_UID_SIZE 6
+#endif
+
+#ifndef BST_CRC_SIZE
+#define BST_CRC_SIZE 2
+#endif
+
 #ifndef BST_BINDKEY_MAX_SIZE
 #define BST_BINDKEY_MAX_SIZE 32
+#endif
+
+#ifndef BST_AUTH_SIZE
+#define BST_AUTH_SIZE 32
 #endif
 
 // We always send fixed size packets.

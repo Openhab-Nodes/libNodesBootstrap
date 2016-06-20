@@ -1,11 +1,11 @@
 # libBootstrapWifi [![Build Status](https://travis-ci.org/Openhab-Nodes/libBootstrapWifi.svg?branch=master)](https://travis-ci.org/Openhab-Nodes/libBootstrapWifi)
 
-If you program and run your devices initially, they need their first bootstraping information
+If you program and run your devices initially, they need their first bootstrapping information
 like the WiFi SSID, the WiFi KEY and probably other information.
 
 This library is to be used together with the [android app](https://github.com/Openhab-Nodes/libBootstrapWifiApp).
 
-__How it works:__ 
+__How it works:__
 [State machine](doc/states.png)
 Your device will open an access point with a name like "**BST-somename-AFCDB9**" in the **Discover mode** state
 (after boot and if no bootstrap information is available so far). The app connects to such a ssid and if that works, it will request a list of wifi networks in range from the device. The app user enters the credentials and further bootstrap data is gathered and transmitted eventually. The library interprets the data and calls you back with `bst_connect_to_wifi`. If advanced information is provided, `bst_connect_advanced` is called to further bootstrap your device. If all went well, on next boot all necessary information is available.

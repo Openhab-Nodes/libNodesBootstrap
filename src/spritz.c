@@ -30,6 +30,7 @@ ALIGNED(64) typedef struct State_ {
 static void
 memzero(void *pnt, size_t len)
 {
+#undef _WIN32
 #ifdef _WIN32
     SecureZeroMemory(pnt, len);
 #else

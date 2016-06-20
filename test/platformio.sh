@@ -1,6 +1,5 @@
 #!/bin/sh -eux
 
-pip install --user platformio
 
 for TESTNAME in ArduinoBuildTest
 do

@@ -17,8 +17,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "boostrapWifi.h"
-#include "prv_boostrapWifi.h"
+#include "bootstrapWifi.h"
+#include "prv_bootstrapWifi.h"
 #include "test_platform_impl.h"
 
 class SetupTests : public testing::Test, public bst_platform {
@@ -46,16 +46,19 @@ public:
     bst_connect_state bst_get_connection_state() override {
         return BST_STATE_NO_CONNECTION;
     }
-    void bst_connect_to_wifi(const char *ssid, const char *pwd, bst_state state) override {
+    void bst_connect_to_wifi(const char *ssid, const char *pwd) override {
         this->m_ssid = ssid;
         this->m_pwd = pwd;
-        this->m_state = state;
+        this->m_state = bst_get_state();
     }
     void bst_connect_advanced(const char *data) override {
         (void)data;
     }
 
     void bst_request_wifi_network_list() {
+    }
+
+    void bst_connected_to_bootstrap_network() {
     }
 
     void bst_store_bootstrap_data(char *data, size_t data_len) {
@@ -68,40 +71,66 @@ public:
     }
 };
 
+static bool operator ==(const bst_crc_value& v1, const bst_crc_value& v2) {
+    return v1.crc[0] == v2.crc[0] && v1.crc[1] == v2.crc[1];
+}
+
 TEST_F(SetupTests, CRC16) {
     typedef struct __attribute__((__packed__)) {
         unsigned char data[9];
-        unsigned char chk[2];
+        bst_crc_value crc;
     } data_with_chk;
 
-    data_with_chk data = {{'1','2','3','4','5','6','7','8','9'}, {0x29, 0xB1}};
-    ASSERT_EQ(0x29B1, bst_crc16((unsigned char*)&data,9));
-    ASSERT_EQ(0, bst_crc16((unsigned char*)&data,11));
+    data_with_chk data = {{'1','2','3','4','5','6','7','8','9'}, {0, 0}};
+    bst_crc_value v, v_zero = {0,0}, cmp = {0x29, 0xB1};
+    unsigned char* pData = (unsigned char*)&data;
 
-    uint16_t crc16 = 0x29B1;
+    // Test if CRC-16/CCITT-FALSE with 1-9 equals 0x29B1
+    v = bst_crc16(pData,9);
+    ASSERT_TRUE(cmp == v);
 
-    char* crc = (char*)&(crc16);
-    // Store crc16 in network byte order
-    crc[0] = crc16 & 0xff;
-    crc[1] = (crc16>>8) & 0xff;
+    data.crc = v;
+    v = bst_crc16(pData,9+sizeof(bst_crc_value));
+    ASSERT_TRUE(v_zero == v);
+}
 
-    // convert network to host byte order
-    crc16 = crc[0] + (crc[1]<<8);
-    ASSERT_EQ(0x29B1, crc16);
+TEST_F(SetupTests, CRC16withHello) {
+    unsigned char data[] = {0x42 ,0x53 ,0x54 ,0x77 ,0x69 ,0x66 ,0x69 ,0x31 ,0xc5 ,0x86 ,0x01 ,0xa9 ,0x20 ,0xa9 ,0x38 ,0x1a ,0x31 ,0x9d ,0x32};
+    bst_crc_value v, cmp = {222, 30};
+    unsigned char* pData = (unsigned char*)&data;
+
+    int offset = 8 + 2 + 1; // skip header + crc field and command field
+    int len = sizeof(data)-offset;
+
+    ASSERT_EQ(11, offset);
+    ASSERT_EQ(8, len);
+
+    // Test if CRC-16/CCITT-FALSE with 1-9 equals 0x29B1
+    v = bst_crc16(pData+offset, len);
+    ASSERT_TRUE(cmp == v);
 }
 
 TEST_F(SetupTests, EncryptDecrypt) {
+    bst_connect_options o = default_options();
+    bst_setup(o, NULL, 0, NULL, 0);
+
+    uint64_t* p1 = (uint64_t*)prv_instance.state.prv_device_nonce;
+    uint64_t* p2 = (uint64_t*)prv_instance.state.prv_app_nonce;
+    for (unsigned i=0;i<BST_NONCE_SIZE/8;++i) {
+         p1[i] = p2[i] = 'a'+i;
+    }
+
     bst_udp_send_pkt_t p;
 
     prv_add_header(&p);
     memcpy(p.device_nonce,"test",5);
-    prv_add_checksum_and_encrypt(&p);
+    prv_add_checksum_and_encrypt(&p, sizeof(bst_udp_send_pkt_t));
 
     bst_udp_hello_receive_pkt_t* pkt = (bst_udp_hello_receive_pkt_t*)&p;
     ASSERT_TRUE(prv_check_header_and_decrypt((bst_udp_receive_pkt_t*)pkt,sizeof(bst_udp_send_pkt_t)));
 
-    // safety \0
-    pkt->app_nonce[BST_NONCE_SIZE-1] = 0;
+    pkt->app_nonce[BST_NONCE_SIZE-1] = 0; // safety \0
+
     ASSERT_STREQ("test", pkt->app_nonce);
 }
 
@@ -115,10 +144,10 @@ TEST_F(SetupTests, NormalOptions) {
     bst_connect_options o = default_options();
     bst_setup(o,NULL, 0, NULL, 0);
 
-    ASSERT_EQ(BST_MODE_WAIT_FOR_BOOTSTRAP, prv_instance.state.state);
+    ASSERT_EQ(BST_MODE_CONNECTING_TO_BOOTSTRAP, prv_instance.state.state);
     ASSERT_STREQ("app_secret", prv_instance.crypto_secret);
 
-    ASSERT_EQ(BST_MODE_WAIT_FOR_BOOTSTRAP, m_state);
+    ASSERT_EQ(BST_MODE_CONNECTING_TO_BOOTSTRAP, bst_get_state());
     ASSERT_STREQ(m_pwd, prv_instance.options.bootstrap_key);
     ASSERT_STREQ(m_ssid, prv_instance.options.bootstrap_ssid);
 }
@@ -136,14 +165,14 @@ TEST_F(SetupTests, OptionsWithStoredData) {
     char data[512] = {0};
     char* p = data;
     memcpy(p,"WLAN_SSID_NAME", sizeof("WLAN_SSID_NAME")); p+= sizeof("WLAN_SSID_NAME");
-    ASSERT_EQ(sizeof("WLAN_SSID_NAME"), p - data);
+    ASSERT_EQ(sizeof("WLAN_SSID_NAME"), (unsigned) (p - data));
 
     // Test with only ssid set
     bst_setup(o, data, p - data, NULL, 0);
     ASSERT_EQ(sizeof("WLAN_SSID_NAME"),prv_instance.storage_len);
 
     ASSERT_STREQ("WLAN_SSID_NAME", prv_instance.ssid);
-    ASSERT_EQ(BST_MODE_BOOTSTRAPPED, prv_instance.state.state);
+    ASSERT_EQ(BST_MODE_CONNECTING_TO_DEST, prv_instance.state.state);
     ASSERT_STREQ("WLAN_SSID_NAME", this->m_ssid);
     ASSERT_FALSE(this->m_pwd);
     ASSERT_FALSE(prv_instance.pwd);
@@ -151,7 +180,7 @@ TEST_F(SetupTests, OptionsWithStoredData) {
 
     // Test with ssid and pwd set
     memcpy(p,"WLAN_PWD", sizeof("WLAN_PWD")); p+= sizeof("WLAN_PWD");
-    ASSERT_EQ(sizeof("WLAN_SSID_NAME")+sizeof("WLAN_PWD"), p - data);
+    ASSERT_EQ(sizeof("WLAN_SSID_NAME")+sizeof("WLAN_PWD"), (unsigned)(p - data));
 
     bst_setup(o,data, p - data, NULL, 0);
     ASSERT_EQ(sizeof("WLAN_SSID_NAME")+sizeof("WLAN_PWD"),prv_instance.storage_len);

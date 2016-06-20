@@ -1,6 +1,8 @@
+#pragma once
 
-#ifndef __SPRITZ_H__
-#define __SPRITZ_H__
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 int spritz_hash(unsigned char *out, size_t outlen,
                 const unsigned char *msg, size_t msglen);
@@ -19,4 +21,6 @@ int spritz_decrypt(unsigned char *out, const unsigned char *c, size_t clen,
 int spritz_auth(unsigned char *out, size_t outlen,
                 const unsigned char *msg, size_t msglen,
                 const unsigned char *key, size_t keylen);
+#ifdef __cplusplus
+}
 #endif

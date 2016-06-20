@@ -9,7 +9,7 @@ project(boostrapWifiTests C CXX)
 SET(REPO_ROOT ${CMAKE_CURRENT_LIST_DIR}/..)
 set(TEST_DIR ${REPO_ROOT}/test)
 
-include("${REPO_ROOT}/src/boostrapWifi.cmake")
+include("${REPO_ROOT}/src/bootstrapWifi.cmake")
 
 enable_testing()
 
@@ -17,14 +17,27 @@ add_compile_options(-pedantic-errors -ansi -Wextra -Wall -Wuninitialized -Wmissi
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-elide-constructors -Woverloaded-virtual")
 
 ## Prepare gtest
-if(EXISTS "${GTEST_DIR}")
-    set(GTEST_DIR $ENV{GTEST_DIR} CACHE PATH "")
-    set(GTEST_FILES ${GTEST_DIR}/src/gtest-all.cc ${GTEST_DIR}/src/gtest_main.cc)
-    set(GTEST_INCLUDE_DIRS ${GTEST_DIR} ${GTEST_DIR}/include)
-    add_definitions(-DGTEST_HAS_PTHREAD=0)
-else()
-    find_package(GTest REQUIRED)
-    set(GTEST_FILES "")
+find_package(GTest QUIET)
+set(GTEST_FILES "")
+
+if (NOT GTEST_FOUND)
+  # Either it is given via an environment variable or we download it ourself
+  set(GTEST_DIR $ENV{GTEST_DIR} CACHE PATH "")
+  if (NOT EXISTS "${GTEST_DIR}")
+    set(GTEST_DIR "${CMAKE_BINARY_DIR}/googletest/googletest")
+    if (NOT EXISTS "${GTEST_DIR}")
+    execute_process(
+      COMMAND git clone https://github.com/google/googletest.git
+      WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    endif()
+  endif()
+
+  set(GTEST_FILES ${GTEST_DIR}/src/gtest-all.cc ${GTEST_DIR}/src/gtest_main.cc)
+  set(GTEST_INCLUDE_DIRS ${GTEST_DIR} ${GTEST_DIR}/include)
+  add_definitions(-DGTEST_HAS_PTHREAD=0)
+  if (NOT EXISTS "${GTEST_DIR}")
+    message(FATAL_ERROR "No gtest found")
+  endif()
 endif()
 
 ## Prepare for coverage measuring
@@ -54,4 +67,3 @@ endif()
 if(NOT EXISTS "${GTEST_DIR}")
     target_link_libraries(${PROJECT_NAME} ${GTEST_BOTH_LIBRARIES})
 endif()
-

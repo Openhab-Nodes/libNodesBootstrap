@@ -4,16 +4,20 @@
 #include <stdbool.h>
 #include <time.h>
 
-#include "boostrapWifiConfig.h"
-#include "boostrapWifi.h"
+#include "bootstrapWifiConfig.h"
+#include "bootstrapWifi.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#define BST_NETWORK_HEADER_SIZE (sizeof(BST_NETWORK_HEADER)-1)
+
 typedef enum
 {
-    STATE_OK,
+    STATE_OK,       // Send with the wifi list and no errors occurred
+    STATE_HELLO,    // Used for unencrypted "hello" messages
+    STATE_BOOTSTRAP_OK, // Used as confirmation message that bootstraping was succesful
 
     STATE_ERROR_UNSPECIFIED,
     STATE_ERROR_BINDING,
@@ -61,8 +65,11 @@ typedef struct _instance_ {
             time_t timeout_connecting_advanced;
             time_t timeout_connecting_destination;
             time_t timeout_connecting_bootstrap_app;
-            time_t timeout_app_session;
         };
+        // The bootstrap app establishes a session with its first
+        // HELLO packet. An app session nonce is provided with such
+        // a packet and this library generates a device nonce in response.
+        // The device nonce is valid for bst_connect_options.timeout_nonce_ms.
         time_t time_nonce_valid;
     } state;
 
@@ -73,6 +80,7 @@ typedef struct _instance_ {
         uint8_t request_set_wifi:1;
         uint8_t request_bind:1;
         uint8_t request_factory_reset:1;
+        uint8_t external_confirmation:1;
     } flags;
 } instance_t;
 
@@ -84,61 +92,85 @@ typedef enum
     CMD_BIND
 } prv_bst_cmd;
 
+typedef enum
+{
+    CONFIRM_NOT_REQUIRED,
+    CONFIRM_REQUIRED,
+    CONFIRM_OK
+} prv_bst_confirm_state;
+
+typedef struct __attribute__((__packed__)) _bst_crc_value
+{
+    uint8_t crc[BST_CRC_SIZE];
+} bst_crc_value;
+
 typedef struct __attribute__((__packed__)) _bst_udp_receive_pkt
 {
-    char hdr[sizeof(BST_NETWORK_HEADER)];
+    char hdr[BST_NETWORK_HEADER_SIZE];
+    bst_crc_value crc; // crc in network byte order
     uint8_t command_code;
-    uint16_t crc16; // crc in network byte order
 } bst_udp_receive_pkt_t;
 
 typedef struct __attribute__((__packed__)) _bst_udp_receive_hello_pkt
 {
-    char hdr[sizeof(BST_NETWORK_HEADER)];
+    char hdr[BST_NETWORK_HEADER_SIZE];
+    bst_crc_value crc; // crc in network byte order
     uint8_t command_code; // == CMD_HELLO
-    uint16_t crc16; // crc in network byte order
     char app_nonce[BST_NONCE_SIZE];
 } bst_udp_hello_receive_pkt_t;
 
 typedef struct __attribute__((__packed__)) _bst_udp_receive_bind_pkt
 {
-    char hdr[sizeof(BST_NETWORK_HEADER)];
+    char hdr[BST_NETWORK_HEADER_SIZE];
+    bst_crc_value crc; // crc in network byte order
     uint8_t command_code; // == CMD_BIND
-    uint16_t crc16; // crc in network byte order
     uint8_t new_bind_key_len;
     char new_bind_key[BST_BINDKEY_MAX_SIZE];
 } bst_udp_bind_receive_pkt_t;
 
 typedef struct __attribute__((__packed__)) _bst_udp_receive_bootstrap_pkt
 {
-    char hdr[sizeof(BST_NETWORK_HEADER)];
+    char hdr[BST_NETWORK_HEADER_SIZE];
+    bst_crc_value crc; // crc in network byte order
     uint8_t command_code; // == CMD_SET_DATA
-    uint16_t crc16; // crc in network byte order
+    // Format: ssid\0pwd\0additional_data
     char bootstrap_data[BST_STORAGE_RAM_SIZE];
 } bst_udp_bootstrap_receive_pkt_t;
 
+typedef struct __attribute__((__packed__)) _bst_udp_send_hello_pkt
+{
+    char hdr[BST_NETWORK_HEADER_SIZE];
+    bst_crc_value crc; // crc in network byte order
+    uint8_t state_code; // prv_bst_error_state
+} bst_udp_send_hello_pkt_t;
 
 typedef struct __attribute__((__packed__)) _bst_udp_send_pkt
 {
-    char hdr[sizeof(BST_NETWORK_HEADER)];
+    char hdr[BST_NETWORK_HEADER_SIZE];
+    bst_crc_value crc; // crc in network byte order
     uint8_t state_code; // prv_bst_error_state
-    uint16_t crc16; // crc in network byte order
     char device_nonce[BST_NONCE_SIZE];
+    char uid[BST_UID_SIZE];
+    uint8_t external_confirmation_state; // one of prv_bst_confirm_state
     uint8_t wifi_list_size_in_bytes;
     uint8_t wifi_list_entries;
     // Store the wifi list and last (error) log message.
     // sizeof(bst_udp_send_pkt_t) == BST_NETWORK_PACKET_SIZE should be true
-    char data_wifi_list_and_log_msg[BST_NETWORK_PACKET_SIZE-2-BST_NONCE_SIZE-sizeof(BST_NETWORK_HEADER)];
+    char data_wifi_list_and_log_msg[BST_NETWORK_PACKET_SIZE
+            -BST_NETWORK_HEADER_SIZE-sizeof(bst_crc_value)
+            -sizeof(uint8_t)-BST_NONCE_SIZE-BST_UID_SIZE-3];
 } bst_udp_send_pkt_t;
 
 extern instance_t prv_instance;
 
-uint16_t bst_crc16(const unsigned char *pData, uint16_t size);
+bst_crc_value bst_crc16(const unsigned char *pData, uint16_t size);
 
 // Make some methods only available on the test suite, otherwise they are static inlined.
 #ifdef BST_TEST_SUITE
 bool prv_check_header_and_decrypt(bst_udp_receive_pkt_t* pkt, size_t pkt_len);
 void prv_add_header(bst_udp_send_pkt_t* pkt);
-void prv_add_checksum_and_encrypt(bst_udp_send_pkt_t* pkt);
+void prv_add_checksum_and_encrypt(bst_udp_send_pkt_t* pkt, size_t pkt_len);
+bool prv_crc16_is_valid(bst_udp_receive_pkt_t* pkt, size_t pkt_len);
 #endif
 
 #ifdef __cplusplus

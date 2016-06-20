@@ -1,5 +1,5 @@
-#include "boostrapWifi.h"
-#include "prv_boostrapWifi.h"
+#include "bootstrapWifi.h"
+#include "prv_bootstrapWifi.h"
 #include <string.h>
 
 #ifndef BST_NO_DEFAULT_PLATFORM
@@ -14,16 +14,20 @@ bst_connect_state __attribute__((weak)) bst_get_connection_state()
     return BST_STATE_NO_CONNECTION;
 }
 
-void __attribute__((weak)) bst_connect_to_wifi(const char* ssid, const char* pwd, bst_state state)
+void __attribute__((weak)) bst_connect_to_wifi(const char* ssid, const char* pwd)
 {
     (void)ssid;
     (void)pwd;
-    (void)state;
 }
 
 void __attribute__((weak)) bst_connect_advanced(const char* data)
 {
     (void)data;
+}
+
+void __attribute__((weak)) bst_connected_to_bootstrap_network()
+{
+
 }
 
 void __attribute__((weak)) bst_request_wifi_network_list()
@@ -49,5 +53,6 @@ uint64_t __attribute__((weak)) bst_get_random()
 {
     return 1;
 }
+
 
 #endif

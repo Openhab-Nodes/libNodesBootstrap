@@ -22,7 +22,7 @@ typedef enum {
     BST_STATE_FAILED_SSID_NOT_FOUND,    ///< wifi credentials, but not in range
     BST_STATE_FAILED_CREDENTIALS_WRONG, ///< wifi pwd does not work
     BST_STATE_FAILED_ADVANCED,          ///< wifi works but the bootstrap information
-                                  ///  for the advanced connection is not correct
+                                        ///  for the advanced connection is not correct
     BST_STATE_CONNECTED = 10,           ///< Connected to wifi
     BST_STATE_CONNECTED_ADVANCED,       ///< Only if applicable: Advanced connection established
     BST_STATE_CONNECTING,               ///< Currently connecting
@@ -30,21 +30,30 @@ typedef enum {
 } bst_connect_state;
 
 typedef enum {
-    BST_MODE_UNINITIALIZED,       ///< Before calling bst_setup()
-    BST_MODE_WAIT_FOR_BOOTSTRAP,  ///< Wait for bootstrap data
-    BST_MODE_BOOTSTRAPPED,        ///< Bootstrapping done
-
+    BST_MODE_UNINITIALIZED,          ///< Before calling bst_setup()
+    BST_MODE_CONNECTING_TO_BOOTSTRAP,///< Connecting to the bootstrap network
+    BST_MODE_WAITING_FOR_DATA,  ///< Wait for bootstrap data
+    BST_MODE_CONNECTING_TO_DEST,     ///< Bootstrapping done
+    BST_MODE_DESTINATION_CONNECTED   ///< Connected to destination (not necessarly to the advanced connection)
 } bst_state;
+
+typedef enum {
+    BST_CONFIRM_NOT_REQUIRED,
+    BST_CONFIRM_REQUIRED_FIRST_START,
+    BST_CONFIRM_ALWAYS_REQUIRED
+} bst_confirmation_mode;
 
 typedef struct _bst_connect_options_
 {
     /// Device name.
     const char* name;
 
-    /// Unique id of the device as ascii c-string (usually the MAC address in hex)
+    /// Unique id of the device as ascii c-string (usually the MAC address in hex).
+    /// The pointed string need to be of the size of BST_UID_SIZE
+    /// (not counting the trailing \0).
     const char* unique_device_id;
 
-    /// A factory reseted device will use the initial bound key, instead of an
+    /// A factory reseted device will use the initial crypto secret, instead of an
     /// app provided one.
     const char* initial_crypto_secret;
     uint8_t initial_crypto_secret_len;
@@ -76,6 +85,14 @@ typedef struct _bst_connect_options_
     /// the bootstrap process, for example.
     bool need_advanced_connection;
 
+    /// Use one of the bst_confirmation_mode values. Either you disable
+    /// external confirmation entirely, you require the user to confirm
+    /// the bootstrapping process only at the first time or every time
+    /// when the device is in bootstrap mode. An external conformation
+    /// can be for example a button press. Just call bst_confirm_bootstrap()
+    /// during the bootstrap process.
+    uint8_t external_confirmation_mode;
+
     /// If the library cannot establish a connection (BST_CONNECTED or BST_CONNECTED_ADVANCED
     /// if required) after this many attempts or if BST_FAILED_* is returned by bst_connection_state(),
     /// the wifi connection will be dropped and the state will transit to BST_WAIT_FOR_BOOTSTRAP_MODE.
@@ -96,10 +113,12 @@ typedef struct bst_wifi_list_entry {
 /**
  * @brief Boostrap setup routine
  * @param options Configure the boostrap module
- * @param stored_data The data you have stored from the bst_store_data callback or NULL.
+ * @param stored_data The data you have stored from the bst_store_bootstrap_data callback or NULL.
  * @param stored_data_len The data length or 0.
+ * @param secret_key The secret key you have stored from the bst_store_secret_key callback or NULL.
+ * @param secret_key_len Length of the secret key or 0.
  */
-void bst_setup(bst_connect_options options, const char* bst_data, size_t bst_data_len, const char* bound_key, size_t bound_key_len);
+void bst_setup(bst_connect_options options, const char* bst_data, size_t bst_data_len, const char* secret_key, size_t secret_key_len);
 
 /**
  * @brief Call this periodically. The internal state machine and timeouts are managed in here.
@@ -132,11 +151,24 @@ void bst_wifi_network_list(bst_wifi_list_entry_t* list);
 
 /**
  * @brief Remove all bootstrap data (wifi credentials + additional data) and
- * start bootstraping process.
+ * start the bootstraping process.
  */
 void bst_factory_reset();
 
-///// Implement the following methods /////
+/**
+ * @return Return the internal state
+ * (Wait for bootstrapping, bootstrapped, etc).
+ */
+bst_state bst_get_state();
+
+/**
+ * Depending on your configuration of this device (option.external_confirmation_mode)
+ * you may have to confirm the bootstrap process by for example a button press.
+ */
+void bst_confirm_bootstrap();
+
+///////////////////////////////////////////////////////////////////
+///////////////// Implement the following methods /////////////////
 
 /**
  * @brief Outgoing network traffic for udp port 8711 to be broadcasted
@@ -160,12 +192,18 @@ bst_connect_state bst_get_connection_state();
  * @param ssid
  * @param pwd
  */
-void bst_connect_to_wifi(const char* ssid, const char* pwd, bst_state state);
+void bst_connect_to_wifi(const char* ssid, const char* pwd);
 
 /// If you need to bootstrap not only the wifi connection but for example also
 /// need to connect to a server, you may set the **need_advanced_connection** option.
 /// After a successful wifi connection this method will be called with the additional data the app provided.
 void bst_connect_advanced(const char* data);
+
+/**
+ * You are called back by this method once, if a connection
+ * to the bootstrap wifi network could be established.
+ */
+void bst_connected_to_bootstrap_network();
 
 /**
  * @brief bst_request_wifi_network_list
@@ -175,20 +213,20 @@ void bst_connect_advanced(const char* data);
 void bst_request_wifi_network_list();
 
 /**
- * @brief Store the data blobs with the given lengths.
+ * @brief Store the data blob with the given lengths.
  * Provide this data to `bst_setup` on boot. This is called when new wifi credentials arrive.
- * @param data
- * @param data_len
+ * @param bst_data Bootstrap data blob
+ * @param bst_data_len Length of the blob
  */
 void bst_store_bootstrap_data(char* bst_data, size_t bst_data_len);
 
 /**
- * @brief Store the data blobs with the given lengths.
+ * @brief Store the data blob with the given lengths.
  * Provide this data to `bst_setup` on boot. This is called when the bound key changes.
- * @param data
- * @param data_len
+ * @param secret Secret. This may contain any characters, do not use strlen() on secret.
+ * @param secret_len Length of the secret.
  */
-void bst_store_crypto_secret(char* bound_key, size_t bound_key_len);
+void bst_store_crypto_secret(char* secret, size_t secret_len);
 
 /**
  * @brief Set error message.
