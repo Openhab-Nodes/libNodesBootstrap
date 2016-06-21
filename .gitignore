@@ -1,6 +1,5 @@
 .pioenvs
 .clang_complete
 .gcc-flags.json
-build-test-*
-.idea
-CMakeLists.txt.user
+ build-*
+ CMakeLists.txt.user

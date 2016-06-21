@@ -154,7 +154,8 @@ TEST_F(RequestWifiListTests, RequestList) {
 
     ASSERT_EQ((size_t)BST_NETWORK_PACKET_SIZE, output_data.size());
 
-    //print_out_array(output_data.data(), output_data.size());
+    //print_out_java_array("msg_encrypted_crc_key_app_secret", output_data.data(), output_data.size());
+    //print_out_java_array("app_nonce", prv_instance.state.prv_app_nonce, BST_NONCE_SIZE);
 
     bst_udp_send_pkt_t* pkt = (bst_udp_send_pkt_t*)output_data.data();
     ASSERT_TRUE(check_send_header_and_decrypt(pkt));

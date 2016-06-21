@@ -1,7 +1,36 @@
 
-/*
+#ifdef BST_DEBUG_FULL
+#include <string.h>
 #include "prv_bootstrapWifi.h"
-void debug_output_data_out(const char* data, size_t data_len) {
+#include "spritz.h"
+
+void debug_output_java_packet(const char* data, size_t data_len) {
+  BST_DBG("byte crypto[] = {");
+  for (int i=0;i<prv_instance.crypto_secret_len;++i)
+    BST_DBG("%d, ", (signed char)prv_instance.crypto_secret[i]);
+  BST_DBG("};\n");
+
+  BST_DBG("byte prv_app_nonce[] = {");
+  for (int i=0;i<BST_NONCE_SIZE;++i)
+    BST_DBG("%d, ", (signed char)prv_instance.state.prv_app_nonce[i]);
+  BST_DBG("};\n");
+
+  BST_DBG("byte message[] = {");
+  int wrap = 0;
+  for (int i=0;i<data_len;++i) {
+    BST_DBG("%d, ", (signed char)data[i]);
+    if (++wrap == 20) {
+      wrap = 0;
+      BST_DBG("\n");
+    }
+  }
+  BST_DBG("};\n");
+}
+
+/// Use this in your main loop to output the received data or into bst_network_output to
+/// output the outgoing data with secret key and app nonce.
+/// This can be used for test cases etc.
+void debug_output_packet(const char* data, size_t data_len) {
   BST_DBG("unsigned char crypto[] = {");
   for (int i=0;i<prv_instance.crypto_secret_len;++i)
     BST_DBG("%d, ", (int)prv_instance.crypto_secret[i]);
@@ -17,11 +46,9 @@ void debug_output_data_out(const char* data, size_t data_len) {
     BST_DBG("%d, ", (int)data[i]);
   BST_DBG("}\n");
 }
-*/
 
-/*
-#include "prv_bootstrapWifi.h"
-#include "spritz.h"
+/// Use this in bst_network_output. This will decrypt and crc check the outgoing packet,
+/// print some debug information about it and output the app nonce.
 void debug_outgoing_packet(const char* data, size_t data_len) {
   bst_udp_send_pkt_t* pkt = (bst_udp_send_pkt_t*)data;
   const size_t offset = sizeof(bst_udp_receive_pkt_t);
@@ -40,7 +67,8 @@ void debug_outgoing_packet(const char* data, size_t data_len) {
     prv_instance.state.prv_app_nonce[4], prv_instance.state.prv_app_nonce[5],
     prv_instance.state.prv_app_nonce[6], prv_instance.state.prv_app_nonce[7]);
 }
-*/
+
+#endif
 
 /*
 // We do not use multicast at the moment, but be prepared.

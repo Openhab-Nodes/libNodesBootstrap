@@ -2,7 +2,7 @@
 #include "prv_bootstrapWifi.h"
 #include <string.h>
 
-#ifndef BST_NO_DEFAULT_PLATFORM
+#ifdef BST_DEFAULT_PLATFORM
 void __attribute__((weak)) bst_network_output(const char* data, size_t data_len)
 {
     (void)data;

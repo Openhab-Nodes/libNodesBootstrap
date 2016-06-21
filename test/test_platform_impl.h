@@ -128,16 +128,16 @@ public:
     }
 
     template<class T>
-    static void print_out_array(T* data, size_t data_len) {
-        printf("byte msg[] = {");
+    static void print_out_java_array(const char* var_name, T* data, size_t data_len) {
+        printf("byte %s[] = {", var_name);
         for (unsigned i=0;i<data_len;++i) {
-            unsigned char v = (unsigned char)*(data+i);
-            if ((v>='a' && v<='z') ||
-                    (v>='A' && v<='Z') ||
-                    (v>='0' && v<='9')) {
+            char v = (unsigned char)*(data+i);
+            if (v == '\\')
+                printf("'\\\\',");
+            else if (v>=32 && v<=126) {
                 printf("'%c',", (char)v);
             } else
-                printf("(byte)0x%x,", v);
+                printf("%d,", v);
         }
         printf("};\n");
         fflush(stdout);
